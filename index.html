@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>الطب المصوّر</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet"/>
+
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, orderBy, query }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+    // ✏️ ضع إعدادات Firebase الخاصة بك هنا
+    const firebaseConfig = {
+      apiKey:            "ضع-apiKey-هنا",
+      authDomain:        "ضع-authDomain-هنا",
+      projectId:         "ضع-projectId-هنا",
+      storageBucket:     "ضع-storageBucket-هنا",
+      messagingSenderId: "ضع-messagingSenderId-هنا",
+      appId:             "ضع-appId-هنا"
+    };
+
+    const app  = initializeApp(firebaseConfig);
+    const db   = getFirestore(app);
+    const auth = getAuth(app);
+
+    // ── تحميل المنشورات ──
+    async function loadPosts() {
+      showLoading(true);
+      try {
+        const q = query(collection(db, "posts"), orderBy("createdAt", "desc"));
+        const snap = await getDocs(q);
+        window._posts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      } catch(e) {
+        window._posts = [];
+        console.warn("تعذّر تحميل المنشورات:", e.message);
+      }
+      showLoading(false);
+      buildCats();
+      renderPosts();
+    }
+
+    // ── نشر منشور جديد ──
+    window.publishPost = async function() {
+      const title    = document.getElementById('fTitle').value.trim();
+      const category = document.getElementById('fCategory').value.trim();
+      const desc     = document.getElementById('fDesc').value.trim();
+      if (!title || !desc) { showToast('يرجى ملء العنوان والشرح ⚠️', 'warn'); return; }
+
+      const btn = document.getElementById('btnPublish');
+      btn.disabled = true; btn.textContent = 'جارٍ النشر...';
+
+      const tagsRaw = document.getElementById('fTags').value.trim();
+      try {
+        await addDoc(collection(db, "posts"), {
+          title,
+          category: category || 'عام',
+          image:    document.getElementById('fImage').value.trim(),
+          description: desc,
+          tags:     tagsRaw ? tagsRaw.split(',').map(t=>t.trim()).filter(Boolean) : [],
+          readTime: document.getElementById('fRead').value.trim(),
+          likes:    0,
+          createdAt: new Date().toISOString(),
+          date:     new Date().toLocaleDateString('ar-EG'),
+        });
+        showToast('تم النشر بنجاح ✅');
+        closeForm();
+        ['fTitle','fCategory','fImage','fDesc','fRead','fTags'].forEach(id=>document.getElementById(id).value='');
+        await loadPosts();
+      } catch(e) {
+        showToast('فشل النشر: ' + e.message, 'error');
+      }
+      btn.disabled = false; btn.textContent = 'نشر ✓';
+    };
+
+    // ── حذف منشور ──
+    window.deletePost = async function(id) {
+      if (!confirm('هل تريد حذف هذا المنشور؟')) return;
+      try {
+        await deleteDoc(doc(db, "posts", id));
+        showToast('تم الحذف ✅');
+        await loadPosts();
+      } catch(e) { showToast('فشل الحذف: ' + e.message, 'error'); }
+    };
+
+    // ── تسجيل الدخول ──
+    window.doLogin = async function() {
+      const email = document.getElementById('loginEmail').value.trim();
+      const pass  = document.getElementById('loginPass').value.trim();
+      const btn   = document.getElementById('btnLogin');
+      btn.disabled = true; btn.textContent = 'جارٍ الدخول...';
+      try {
+        await signInWithEmailAndPassword(auth, email, pass);
+        showToast('مرحباً بك 👋');
+        closeLoginModal();
+      } catch(e) {
+        showToast('خطأ: ' + (e.code === 'auth/wrong-password' ? 'كلمة المرور خاطئة' : e.message), 'error');
+      }
+      btn.disabled = false; btn.textContent = 'دخول';
+    };
+
+    window.doLogout = async function() {
+      await signOut(auth);
+      showToast('تم تسجيل الخروج');
+    };
+
+    // ── مراقبة حالة الدخول ──
+    onAuthStateChanged(auth, user => {
+      window._isAdmin = !!user;
+      document.getElementById('adminBar').style.display  = user ? 'flex' : 'none';
+      document.getElementById('loginBtn').style.display  = user ? 'none' : 'flex';
+      document.getElementById('fab').style.display       = user ? 'flex' : 'none';
+      renderPosts();
+    });
+
+    // تشغيل أولي
+    loadPosts();
+    window._loadPosts = loadPosts;
+  </script>
+
+  <style>
+    :root {
+      --primary:#023e8a; --accent:#0077b6; --light:#00b4d8;
+      --bg:#f0f4f8; --white:#fff; --text:#333;
+      --muted:#888; --border:#e8eef4;
+      --tag-bg:#e8f4fd; --tag:#0077b6;
+      --danger:#e63946;
+    }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Cairo',sans-serif;background:var(--bg);direction:rtl;color:var(--text);}
+
+    /* HEADER */
+    header{
+      background:linear-gradient(135deg,var(--primary),var(--accent) 60%,var(--light));
+      padding:14px 20px; position:sticky; top:0; z-index:100;
+      box-shadow:0 4px 20px rgba(2,62,138,.28);
+      display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    }
+    .logo{display:flex;align-items:center;gap:10px;flex:1;}
+    .logo-icon{width:44px;height:44px;background:rgba(255,255,255,.2);border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:22px;}
+    .logo-name{color:#fff;font-weight:900;font-size:19px;}
+    .logo-sub{color:rgba(255,255,255,.65);font-size:11px;}
+    .search-wrap{background:rgba(255,255,255,.15);border-radius:30px;padding:8px 16px;display:flex;align-items:center;gap:8px;flex:1;max-width:300px;}
+    .search-wrap input{background:transparent;border:none;outline:none;color:#fff;font-size:14px;font-family:'Cairo',sans-serif;width:100%;}
+    .search-wrap input::placeholder{color:rgba(255,255,255,.55);}
+    .header-btns{display:flex;gap:8px;align-items:center;}
+    .hbtn{padding:7px 16px;border-radius:20px;border:none;cursor:pointer;font-family:'Cairo',sans-serif;font-size:13px;font-weight:700;}
+    #loginBtn{background:rgba(255,255,255,.2);color:#fff;}
+    #adminBar{display:none;align-items:center;gap:8px;}
+    .admin-label{color:rgba(255,255,255,.8);font-size:12px;}
+    #logoutBtn{background:rgba(255,255,255,.15);color:#fff;font-size:12px;padding:6px 12px;border-radius:16px;border:none;cursor:pointer;font-family:'Cairo',sans-serif;}
+
+    /* CONTAINER */
+    .container{max-width:960px;margin:0 auto;padding:26px 16px;}
+
+    /* LOADING */
+    #loadingBar{text-align:center;padding:60px;color:var(--muted);display:none;}
+    .spinner{width:40px;height:40px;border:4px solid #dde8f0;border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px;}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    /* STATS */
+    .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:26px;}
+    .stat{background:var(--white);border-radius:18px;padding:16px 10px;text-align:center;box-shadow:0 2px 14px rgba(0,0,0,.06);}
+    .stat-icon{font-size:24px;margin-bottom:4px;}
+    .stat-num{font-size:24px;font-weight:900;color:var(--primary);}
+    .stat-lbl{font-size:12px;color:var(--muted);}
+
+    /* CATS */
+    .cats{display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;margin-bottom:20px;scrollbar-width:none;}
+    .cats::-webkit-scrollbar{display:none;}
+    .cat{padding:8px 18px;border-radius:30px;font-size:13px;font-family:'Cairo',sans-serif;font-weight:700;white-space:nowrap;cursor:pointer;border:none;background:var(--white);color:var(--muted);box-shadow:0 2px 8px rgba(0,0,0,.07);transition:all .2s;}
+    .cat.active,.cat:hover{background:var(--accent);color:#fff;box-shadow:0 4px 14px rgba(0,119,182,.3);}
+
+    /* SECTION TITLE */
+    .sec-title{font-size:17px;font-weight:900;color:var(--primary);margin-bottom:16px;display:flex;align-items:center;gap:8px;}
+    .sec-title::after{content:'';flex:1;height:2px;background:linear-gradient(to left,transparent,var(--accent));border-radius:2px;}
+
+    /* GRID */
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:20px;}
+
+    /* CARD */
+    .card{background:var(--white);border-radius:22px;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,.08);cursor:pointer;transition:transform .25s,box-shadow .25s;}
+    .card:hover{transform:translateY(-7px);box-shadow:0 20px 44px rgba(0,80,120,.16);}
+    .card-img-box{position:relative;}
+    .card-img{width:100%;height:185px;object-fit:cover;display:block;background:#dde8f0;}
+    .img-ph{width:100%;height:185px;background:linear-gradient(135deg,#cfe2f3,#a8d1e7);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#5a9abf;font-size:13px;gap:8px;}
+    .img-ph span{font-size:34px;}
+    .card-badge{position:absolute;top:12px;right:12px;background:var(--accent);color:#fff;border-radius:20px;padding:4px 13px;font-size:11px;font-weight:800;}
+    .del-btn{position:absolute;top:12px;left:12px;background:rgba(230,57,70,.85);border:none;border-radius:50%;width:30px;height:30px;color:#fff;font-size:16px;cursor:pointer;display:none;align-items:center;justify-content:center;}
+    .admin-mode .del-btn{display:flex;}
+    .card-body{padding:16px;}
+    .card-title{color:var(--primary);font-size:16px;font-weight:800;margin-bottom:8px;}
+    .card-desc{color:#666;font-size:13px;line-height:1.8;margin-bottom:12px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+    .tags{margin-bottom:12px;display:flex;flex-wrap:wrap;gap:4px;}
+    .tag{background:var(--tag-bg);color:var(--tag);padding:3px 11px;border-radius:20px;font-size:12px;font-weight:600;}
+    .card-footer{display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:10px;}
+    .read-time{color:var(--muted);font-size:12px;}
+    .like-btn{background:none;border:none;cursor:pointer;font-family:'Cairo',sans-serif;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:5px;transition:transform .2s;}
+    .like-btn:hover{transform:scale(1.2);}
+    .like-btn.liked{color:var(--danger);}
+
+    /* EMPTY */
+    .empty{text-align:center;padding:70px 0;color:var(--muted);display:none;}
+    .empty-icon{font-size:50px;margin-bottom:12px;}
+
+    /* FAB */
+    .fab{position:fixed;bottom:28px;left:28px;width:58px;height:58px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--light));border:none;color:#fff;font-size:28px;cursor:pointer;box-shadow:0 8px 24px rgba(0,119,182,.45);display:none;align-items:center;justify-content:center;transition:transform .2s,box-shadow .2s;z-index:150;}
+    .fab:hover{transform:scale(1.1);}
+
+    /* MODAL */
+    .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;align-items:center;justify-content:center;padding:16px;}
+    .overlay.open{display:flex;animation:fadeIn .2s ease;}
+    @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+    .modal{background:var(--white);border-radius:26px;max-width:620px;width:100%;max-height:92vh;overflow-y:auto;box-shadow:0 32px 80px rgba(0,0,0,.28);}
+    .modal-img-box{position:relative;}
+    .modal-img{width:100%;height:250px;object-fit:cover;border-radius:26px 26px 0 0;display:block;background:#cfe2f3;}
+    .modal-close{position:absolute;top:14px;left:14px;width:38px;height:38px;background:rgba(0,0,0,.45);border:none;border-radius:50%;color:#fff;font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+    .modal-badge{position:absolute;bottom:14px;right:14px;background:var(--accent);color:#fff;border-radius:20px;padding:5px 16px;font-size:12px;font-weight:800;}
+    .modal-body{padding:26px;}
+    .modal-title{color:var(--primary);font-size:22px;font-weight:900;margin-bottom:10px;}
+    .modal-meta{display:flex;gap:16px;color:var(--muted);font-size:13px;margin-bottom:18px;flex-wrap:wrap;}
+    .modal-desc{color:#444;font-size:15px;line-height:2.1;margin-bottom:22px;}
+    .modal-tags-lbl{color:var(--muted);font-size:13px;margin-bottom:8px;}
+
+    /* FORM MODAL */
+    .form-box{background:var(--white);border-radius:24px;max-width:560px;width:100%;padding:28px;box-shadow:0 30px 80px rgba(0,0,0,.25);max-height:90vh;overflow-y:auto;}
+    .form-title{font-size:20px;font-weight:900;color:var(--primary);margin-bottom:20px;}
+    .form-group{margin-bottom:14px;}
+    .form-label{display:block;font-size:13px;font-weight:700;color:#555;margin-bottom:5px;}
+    .form-input,.form-textarea{width:100%;padding:10px 14px;border-radius:12px;border:1.5px solid var(--border);font-family:'Cairo',sans-serif;font-size:14px;color:var(--text);outline:none;transition:border .2s;}
+    .form-input:focus,.form-textarea:focus{border-color:var(--accent);}
+    .form-textarea{resize:vertical;min-height:100px;}
+    .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+    .btn-pub{width:100%;padding:13px;border-radius:14px;border:none;background:linear-gradient(135deg,var(--primary),var(--accent));color:#fff;font-family:'Cairo',sans-serif;font-size:15px;font-weight:800;cursor:pointer;margin-top:8px;transition:opacity .2s;}
+    .btn-pub:hover{opacity:.88;}
+    .btn-pub:disabled{opacity:.5;cursor:not-allowed;}
+    .btn-cancel{width:100%;padding:11px;border-radius:14px;border:1.5px solid var(--border);background:transparent;font-family:'Cairo',sans-serif;font-size:14px;cursor:pointer;margin-top:8px;color:var(--muted);}
+
+    /* LOGIN MODAL */
+    .login-box{background:var(--white);border-radius:24px;max-width:400px;width:100%;padding:32px;box-shadow:0 30px 80px rgba(0,0,0,.25);}
+    .login-title{font-size:20px;font-weight:900;color:var(--primary);margin-bottom:6px;text-align:center;}
+    .login-sub{color:var(--muted);font-size:13px;text-align:center;margin-bottom:24px;}
+
+    /* TOAST */
+    .toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#023e8a;color:#fff;padding:12px 24px;border-radius:30px;font-size:14px;font-weight:700;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none;white-space:nowrap;}
+    .toast.show{opacity:1;}
+    .toast.warn{background:#f4a261;}
+    .toast.error{background:var(--danger);}
+
+    /* FIREBASE NOTICE */
+    .firebase-notice{background:#fff3cd;border:1.5px solid #ffc107;border-radius:14px;padding:16px 20px;margin-bottom:24px;font-size:13px;line-height:1.9;color:#856404;}
+    .firebase-notice strong{color:#5a3e00;}
+    .firebase-notice a{color:var(--accent);}
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">🩺</div>
+    <div>
+      <div class="logo-name">الطب المصوّر</div>
+      <div class="logo-sub">منصة تعليمية طبية</div>
+    </div>
+  </div>
+  <div class="search-wrap">
+    <span style="color:rgba(255,255,255,.7)">🔍</span>
+    <input type="text" id="searchInput" placeholder="ابحث..." oninput="renderPosts()"/>
+  </div>
+  <div class="header-btns">
+    <div id="adminBar">
+      <span class="admin-label">🔐 أنت مسجّل الدخول</span>
+      <button id="logoutBtn" onclick="doLogout()">خروج</button>
+    </div>
+    <button class="hbtn" id="loginBtn" onclick="openLoginModal()">🔐 دخول</button>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- تنبيه إعداد Firebase -->
+  <div class="firebase-notice" id="fbNotice">
+    ⚙️ <strong>خطوة مطلوبة:</strong> لكي يعمل النشر عبر الإنترنت، يجب إعداد Firebase مجاناً:
+    <br>
+    1️⃣ اذهب إلى <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a> وأنشئ مشروعاً جديداً
+    <br>
+    2️⃣ فعّل <strong>Firestore Database</strong> و <strong>Authentication → Email/Password</strong>
+    <br>
+    3️⃣ أضف مستخدماً بإيميلك وكلمة مرور من قسم Authentication
+    <br>
+    4️⃣ انسخ إعدادات المشروع (Project Settings → Your apps) والصقها في الكود أعلى الملف
+    <br>
+    5️⃣ في Firestore Rules ضع: <code style="background:#f8f9fa;padding:2px 6px;border-radius:4px">allow read: if true; allow write: if request.auth != null;</code>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats">
+    <div class="stat"><div class="stat-icon">📋</div><div class="stat-num" id="statPosts">0</div><div class="stat-lbl">مقالة</div></div>
+    <div class="stat"><div class="stat-icon">❤️</div><div class="stat-num" id="statLikes">0</div><div class="stat-lbl">إعجاب</div></div>
+    <div class="stat"><div class="stat-icon">🏷️</div><div class="stat-num" id="statCats">0</div><div class="stat-lbl">تخصص</div></div>
+  </div>
+
+  <!-- CATS -->
+  <div class="cats" id="catsBar"></div>
+
+  <!-- SECTION TITLE -->
+  <div class="sec-title">📌 أحدث المنشورات</div>
+
+  <!-- LOADING -->
+  <div id="loadingBar"><div class="spinner"></div>جارٍ التحميل...</div>
+
+  <!-- GRID -->
+  <div class="grid" id="postsGrid"></div>
+  <div class="empty" id="emptyState">
+    <div class="empty-icon">🗂️</div>
+    <p>لا توجد منشورات بعد</p>
+  </div>
+
+</div>
+
+<!-- FAB -->
+<button class="fab" id="fab" onclick="openForm()">＋</button>
+
+<!-- نافذة عرض المنشور -->
+<div class="overlay" id="viewOverlay" onclick="closeView(event)">
+  <div class="modal">
+    <div class="modal-img-box">
+      <img class="modal-img" id="mImg" src="" alt=""/>
+      <button class="modal-close" onclick="closeViewDirect()">×</button>
+      <div class="modal-badge" id="mBadge"></div>
+    </div>
+    <div class="modal-body">
+      <div class="modal-title" id="mTitle"></div>
+      <div class="modal-meta" id="mMeta"></div>
+      <div class="modal-desc" id="mDesc"></div>
+      <div class="modal-tags-lbl">الوسوم:</div>
+      <div id="mTags"></div>
+    </div>
+  </div>
+</div>
+
+<!-- نافذة إضافة منشور -->
+<div class="overlay" id="formOverlay" onclick="closeFormOut(event)">
+  <div class="form-box">
+    <div class="form-title">➕ نشر محتوى جديد</div>
+    <div class="form-group">
+      <label class="form-label">العنوان *</label>
+      <input class="form-input" id="fTitle" type="text" placeholder="عنوان المنشور"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">التخصص *</label>
+      <input class="form-input" id="fCategory" type="text" placeholder="مثال: القلب والأوعية"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">رابط الصورة (اختياري)</label>
+      <input class="form-input" id="fImage" type="url" placeholder="https://..."/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">الشرح الطبي *</label>
+      <textarea class="form-textarea" id="fDesc" placeholder="اكتب الشرح هنا..."></textarea>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">وقت القراءة</label>
+        <input class="form-input" id="fRead" type="text" placeholder="٣ دقائق"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">الوسوم (بفاصلة)</label>
+        <input class="form-input" id="fTags" type="text" placeholder="قلب, دم"/>
+      </div>
+    </div>
+    <button class="btn-pub" id="btnPublish" onclick="publishPost()">نشر ✓</button>
+    <button class="btn-cancel" onclick="closeForm()">إلغاء</button>
+  </div>
+</div>
+
+<!-- نافذة تسجيل الدخول -->
+<div class="overlay" id="loginOverlay" onclick="closeLoginOut(event)">
+  <div class="login-box">
+    <div class="login-title">🔐 دخول المشرف</div>
+    <div class="login-sub">أدخل بيانات حسابك على Firebase</div>
+    <div class="form-group">
+      <label class="form-label">البريد الإلكتروني</label>
+      <input class="form-input" id="loginEmail" type="email" placeholder="admin@example.com"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">كلمة المرور</label>
+      <input class="form-input" id="loginPass" type="password" placeholder="••••••••"
+             onkeydown="if(event.key==='Enter') doLogin()"/>
+    </div>
+    <button class="btn-pub" id="btnLogin" onclick="doLogin()">دخول</button>
+    <button class="btn-cancel" onclick="closeLoginModal()">إلغاء</button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+  window._posts = [];
+  window._isAdmin = false;
+  let activeCategory = 'الكل';
+  let likedPosts = {};
+
+  function showLoading(v) {
+    document.getElementById('loadingBar').style.display = v ? 'block' : 'none';
+    document.getElementById('postsGrid').style.display  = v ? 'none' : 'grid';
+  }
+
+  function buildCats() {
+    const cats = ['الكل', ...new Set(window._posts.map(p=>p.category).filter(Boolean))];
+    const bar = document.getElementById('catsBar');
+    bar.innerHTML = '';
+    cats.forEach(cat => {
+      const btn = document.createElement('button');
+      btn.className = 'cat' + (cat === activeCategory ? ' active' : '');
+      btn.textContent = cat;
+      btn.onclick = () => { activeCategory = cat; buildCats(); renderPosts(); };
+      bar.appendChild(btn);
+    });
+    document.getElementById('statCats').textContent = cats.length - 1;
+  }
+
+  function renderPosts() {
+    const q = document.getElementById('searchInput').value.trim();
+    const grid = document.getElementById('postsGrid');
+    const empty = document.getElementById('emptyState');
+    grid.innerHTML = '';
+
+    const filtered = window._posts.filter(p => {
+      const matchCat = activeCategory === 'الكل' || p.category === activeCategory;
+      const matchQ   = !q || p.title.includes(q) || p.description.includes(q) || (p.tags||[]).some(t=>t.includes(q));
+      return matchCat && matchQ;
+    });
+
+    document.getElementById('statPosts').textContent = window._posts.length;
+    document.getElementById('statLikes').textContent = window._posts.reduce((a,p)=>a+(p.likes||0),0);
+
+    if (!filtered.length) { empty.style.display='block'; return; }
+    empty.style.display = 'none';
+
+    filtered.forEach(post => {
+      const liked = likedPosts[post.id];
+      const card  = document.createElement('div');
+      card.className = 'card' + (window._isAdmin ? ' admin-mode' : '');
+      card.onclick = () => openView(post);
+
+      const imgHTML = post.image
+        ? `<img class="card-img" src="${post.image}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+        : '';
+      const ph = `<div class="img-ph" style="${post.image?'display:none':''}"><span>🖼️</span>لا توجد صورة</div>`;
+
+      card.innerHTML = `
+        <div class="card-img-box">
+          ${imgHTML}${ph}
+          <div class="card-badge">${post.category||'عام'}</div>
+          <button class="del-btn" onclick="event.stopPropagation();deletePost('${post.id}')">🗑</button>
+        </div>
+        <div class="card-body">
+          <div class="card-title">${post.title}</div>
+          <div class="card-desc">${post.description}</div>
+          <div class="tags">${(post.tags||[]).map(t=>`<span class="tag">#${t}</span>`).join('')}</div>
+          <div class="card-footer">
+            <span class="read-time">🕐 ${post.readTime||'—'}</span>
+            <button class="like-btn ${liked?'liked':''}" onclick="event.stopPropagation();toggleLike('${post.id}')">
+              ${liked?'❤️':'🤍'} ${(post.likes||0)+(liked?1:0)}
+            </button>
+          </div>
+        </div>`;
+      grid.appendChild(card);
+    });
+  }
+
+  function toggleLike(id) {
+    likedPosts[id] = !likedPosts[id];
+    renderPosts();
+  }
+
+  function openView(post) {
+    document.getElementById('mImg').src   = post.image||'';
+    document.getElementById('mImg').style.display = post.image?'block':'none';
+    document.getElementById('mBadge').textContent = post.category||'عام';
+    document.getElementById('mTitle').textContent = post.title;
+    document.getElementById('mMeta').innerHTML = `<span>📅 ${post.date||''}</span><span>🕐 ${post.readTime||'—'}</span><span>❤️ ${post.likes||0}</span>`;
+    document.getElementById('mDesc').textContent  = post.description;
+    document.getElementById('mTags').innerHTML = (post.tags||[]).map(t=>`<span class="tag" style="font-size:14px">#${t}</span>`).join('');
+    document.getElementById('viewOverlay').classList.add('open');
+  }
+  function closeView(e)  { if(e.target===document.getElementById('viewOverlay')) closeViewDirect(); }
+  function closeViewDirect() { document.getElementById('viewOverlay').classList.remove('open'); }
+
+  function openForm()      { document.getElementById('formOverlay').classList.add('open'); }
+  function closeForm()     { document.getElementById('formOverlay').classList.remove('open'); }
+  function closeFormOut(e) { if(e.target===document.getElementById('formOverlay')) closeForm(); }
+
+  function openLoginModal()   { document.getElementById('loginOverlay').classList.add('open'); }
+  function closeLoginModal()  { document.getElementById('loginOverlay').classList.remove('open'); }
+  function closeLoginOut(e)   { if(e.target===document.getElementById('loginOverlay')) closeLoginModal(); }
+
+  function showToast(msg, type='') {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = 'toast show ' + type;
+    setTimeout(() => t.className='toast', 3000);
+  }
+
+  buildCats();
+  renderPosts();
+</script>
+</body>
+</html>
